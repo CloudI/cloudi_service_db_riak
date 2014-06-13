@@ -66,6 +66,9 @@
          put/4,
          put/5,
          put/6,
+         list_buckets/4,
+         list_keys/4,
+         object_value/1,
          object/2,
          object/3,
          object/4]).
@@ -145,7 +148,8 @@
     {siblings, Key :: binary(), Values :: list(binary())} |
     {error, cloudi_service:error_reason_sync() | no_value | any()}.
 
-new(Dispatcher, Name, Key, Value, Timeout) ->
+new(Dispatcher, Name, Key, Value, Timeout)
+    when (Key =:= undefined) orelse is_binary(Key), is_binary(Value) ->
     case cloudi:send_sync(Dispatcher, Name,
                           {new, Key, Value, []}, Timeout) of
         {ok, {ok, _, _} = Success} ->
@@ -174,7 +178,9 @@ new(Dispatcher, Name, Key, Value, Timeout) ->
     {siblings, Key :: binary(), Values :: list(binary())} |
     {error, cloudi_service:error_reason_sync() | no_value | any()}.
 
-new(Dispatcher, Name, Key, Value, Options, Timeout) ->
+new(Dispatcher, Name, Key, Value, Options, Timeout)
+    when (Key =:= undefined) orelse is_binary(Key), is_binary(Value),
+         is_list(Options) ->
     case cloudi:send_sync(Dispatcher, Name,
                           {new, Key, Value, Options}, Timeout) of
         {ok, {ok, _, _} = Success} ->
@@ -217,7 +223,9 @@ delete(Dispatcher, Name, KeyOrObject, Timeout) ->
     ok |
     {error, cloudi_service:error_reason_sync() | any()}.
 
-delete(Dispatcher, Name, KeyOrObject, Options, Timeout) ->
+delete(Dispatcher, Name, KeyOrObject, Options, Timeout)
+    when is_binary(KeyOrObject) orelse is_tuple(KeyOrObject),
+         is_list(Options) ->
     case cloudi:send_sync(Dispatcher, Name,
                           {delete, KeyOrObject, Options}, Timeout) of
         {ok, ok} ->
@@ -238,13 +246,13 @@ delete(Dispatcher, Name, KeyOrObject, Options, Timeout) ->
           Name :: cloudi_service:service_name(),
           KeyOrObject :: binary() | riakc_obj(),
           Timeout :: cloudi_service:timeout_milliseconds()) ->
-    {ok, Key :: binary(), ValueOrObject :: binary() | riakc_obj()} |
+    {ok, Key :: binary(), Value :: binary()} |
     {siblings, Key :: binary(), Values :: list(binary())} |
     {error, cloudi_service:error_reason_sync() | no_value | any()}.
 
-get(_Dispatcher, _Name, Object, _Timeout)
+get(Dispatcher, Name, Object, Timeout)
     when is_tuple(Object) ->
-    object_to_tuple(Object);
+    get(Dispatcher, Name, riakc_obj:key(Object), [], Timeout);
 get(Dispatcher, Name, Key, Timeout) ->
     get(Dispatcher, Name, Key, [], Timeout).
 
@@ -259,11 +267,12 @@ get(Dispatcher, Name, Key, Timeout) ->
           Key :: binary(),
           Options :: get_options(),
           Timeout :: cloudi_service:timeout_milliseconds()) ->
-    {ok, Key :: binary(), ValueOrObject :: binary() | riakc_obj()} |
+    {ok, Key :: binary(), ValueOrObject :: binary() | riakc_obj() | undefined} |
     {siblings, Key :: binary(), Values :: list(binary())} |
     {error, cloudi_service:error_reason_sync() | no_value | any()}.
 
-get(Dispatcher, Name, Key, Options, Timeout) ->
+get(Dispatcher, Name, Key, Options, Timeout)
+    when is_binary(Key), is_list(Options) ->
     case cloudi:send_sync(Dispatcher, Name,
                           {get, Key, Options}, Timeout) of
         {ok, {ok, _, _} = Success} ->
@@ -312,7 +321,11 @@ get_index_eq(Dispatcher, Name, Index, Key, Timeout) ->
          Continuation :: binary()} |
     {error, cloudi_service:error_reason_sync() | any()}.
 
-get_index_eq(Dispatcher, Name, Index, Key, Options, Timeout) ->
+get_index_eq(Dispatcher, Name, Index, Key, Options, Timeout)
+    when (is_tuple(Index) andalso
+          ((element(1, Index) =:= binary_index) orelse
+           (element(1, Index) =:= integer_index))) orelse
+         is_binary(Index), is_list(Options) ->
     case cloudi:send_sync(Dispatcher, Name,
                           {get_index_eq, Index, Key, Options}, Timeout) of
         {ok, {ok, _, _, _} = Success} ->
@@ -361,7 +374,11 @@ get_index_range(Dispatcher, Name, Index, KeyStart, KeyEnd, Timeout) ->
          Continuation :: binary()} |
     {error, cloudi_service:error_reason_sync() | any()}.
 
-get_index_range(Dispatcher, Name, Index, KeyStart, KeyEnd, Options, Timeout) ->
+get_index_range(Dispatcher, Name, Index, KeyStart, KeyEnd, Options, Timeout)
+    when (is_tuple(Index) andalso
+          ((element(1, Index) =:= binary_index) orelse
+           (element(1, Index) =:= integer_index))) orelse
+         is_binary(Index), is_list(Options) ->
     case cloudi:send_sync(Dispatcher, Name,
                           {get_index_range, Index,
                            KeyStart, KeyEnd, Options}, Timeout) of
@@ -386,7 +403,8 @@ get_index_range(Dispatcher, Name, Index, KeyStart, KeyEnd, Options, Timeout) ->
     {ok, Key :: binary(), Object :: riakc_obj()} |
     {error, cloudi_service:error_reason_sync() | no_value | any()}.
 
-put(Dispatcher, Name, Object, Timeout) ->
+put(Dispatcher, Name, Object, Timeout)
+    when is_tuple(Object) ->
     case cloudi:send_sync(Dispatcher, Name,
                           {put, riakc_obj:key(Object), Object,
                            [{object, true}]}, Timeout) of
@@ -413,7 +431,9 @@ put(Dispatcher, Name, Object, Timeout) ->
     {siblings, Key :: binary(), Values :: list(binary())} |
     {error, cloudi_service:error_reason_sync() | no_value | any()}.
 
-put(Dispatcher, Name, Key, ValueOrObject, Timeout) ->
+put(Dispatcher, Name, Key, ValueOrObject, Timeout)
+    when is_binary(Key),
+         is_binary(ValueOrObject) orelse is_tuple(ValueOrObject) ->
     case cloudi:send_sync(Dispatcher, Name,
                           {put, Key, ValueOrObject, []}, Timeout) of
         {ok, {ok, _, _} = Success} ->
@@ -442,7 +462,10 @@ put(Dispatcher, Name, Key, ValueOrObject, Timeout) ->
     {siblings, Key :: binary(), Values :: list(binary())} |
     {error, cloudi_service:error_reason_sync() | no_value | any()}.
 
-put(Dispatcher, Name, Key, ValueOrObject, Options, Timeout) ->
+put(Dispatcher, Name, Key, ValueOrObject, Options, Timeout)
+    when is_binary(Key),
+         is_binary(ValueOrObject) orelse is_tuple(ValueOrObject),
+         is_list(Options) ->
     case cloudi:send_sync(Dispatcher, Name,
                           {put, Key, ValueOrObject, Options}, Timeout) of
         {ok, {ok, _, _} = Success} ->
@@ -455,12 +478,90 @@ put(Dispatcher, Name, Key, ValueOrObject, Options, Timeout) ->
             Error
     end.
 
+%%-------------------------------------------------------------------------
+%% @doc
+%% ===List buckets.===
+%% Not for poduction use!
+%% @end
+%%-------------------------------------------------------------------------
+
+-spec list_buckets(Dispatcher :: dispatcher(),
+                   Name :: cloudi_service:service_name(),
+                   Options :: list(),
+                   Timeout :: cloudi_service:timeout_milliseconds()) ->
+    {ok, list(binary())} |
+    {error, cloudi_service:error_reason_sync() | any()}.
+
+list_buckets(Dispatcher, Name, Options, Timeout)
+    when is_list(Options) ->
+    case cloudi:send_sync(Dispatcher, Name,
+                          {list_buckets, Options}, Timeout) of
+        {ok, {ok, _} = Success} ->
+            Success;
+        {ok, {error, _} = Error} ->
+            Error;
+        {error, _} = Error ->
+            Error
+    end.
+
+%%-------------------------------------------------------------------------
+%% @doc
+%% ===List keys in a bucket.===
+%% Not for poduction use!
+%% @end
+%%-------------------------------------------------------------------------
+
+-spec list_keys(Dispatcher :: dispatcher(),
+                Name :: cloudi_service:service_name(),
+                Options :: list(),
+                Timeout :: cloudi_service:timeout_milliseconds()) ->
+    {ok, list(binary())} |
+    {error, cloudi_service:error_reason_sync() | any()}.
+
+list_keys(Dispatcher, Name, Options, Timeout)
+    when is_list(Options) ->
+    case cloudi:send_sync(Dispatcher, Name,
+                          {list_keys, Options}, Timeout) of
+        {ok, {ok, _} = Success} ->
+            Success;
+        {ok, {error, _} = Error} ->
+            Error;
+        {error, _} = Error ->
+            Error
+    end.
+
+%%-------------------------------------------------------------------------
+%% @doc
+%% ===Return the riak object value.===
+%% @end
+%%-------------------------------------------------------------------------
+
+-spec object_value(Object :: riakc_obj()) ->
+    {ok, Key :: binary(), Value :: binary()} |
+    {siblings, Key :: binary(), Values :: list(binary())} |
+    {error, no_value}.
+
+object_value(Object) ->
+    object_to_tuple(Object).
+
+%%-------------------------------------------------------------------------
+%% @doc
+%% ===Modify the riak object.===
+%% @end
+%%-------------------------------------------------------------------------
+
 -spec object(F :: atom(),
              Arg1 :: riakc_obj()) ->
     any().
 
 object(F, Arg1) when is_atom(F) ->
     riakc_obj:F(Arg1).
+
+%%-------------------------------------------------------------------------
+%% @doc
+%% ===Modify the riak object.===
+%% @end
+%%-------------------------------------------------------------------------
 
 -spec object(F :: atom(),
              Arg1 :: riakc_obj() | any(),
@@ -469,6 +570,12 @@ object(F, Arg1) when is_atom(F) ->
 
 object(F, Arg1, Arg2) when is_atom(F) ->
     riakc_obj:F(Arg1, Arg2).
+
+%%-------------------------------------------------------------------------
+%% @doc
+%% ===Modify the riak object.===
+%% @end
+%%-------------------------------------------------------------------------
 
 -spec object(F :: atom(),
              Arg1 :: riakc_obj() | any(),
@@ -532,9 +639,7 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
                               _Dispatcher) ->
     Bucket = erlang:list_to_binary(lists:nthtail(PrefixLength, Name)),
     case Request of
-        {new, Key, Value, Options0}
-            when (Key =:= undefined) orelse is_binary(Key),
-                 is_binary(Value), is_list(Options0) ->
+        {new, Key, Value, Options0} ->
             Defaults = [
                 {content_type, undefined},
                 {object, false},
@@ -549,7 +654,7 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
             end,
             Object1 = object_indexes(Object0, Indexes),
             OptionsN = if
-                Key =:= undefined ->
+                Key =:= undefined; ObjectReply =:= true ->
                     [return_body | Options1];
                 true ->
                     Options1
@@ -557,12 +662,8 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
             Response = case riakc_pb_socket:put(Connection, Object1,
                                                 OptionsN, Timeout) of
                 ok ->
-                    if
-                        ObjectReply =:= true ->
-                            {ok, Key, Object1};
-                        ObjectReply =:= false ->
-                            object_to_tuple(Object1)
-                    end;
+                    false = ObjectReply,
+                    {ok, Key, Value};
                 {ok, ObjectN} ->
                     if
                         ObjectReply =:= true ->
@@ -575,18 +676,17 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
             end,
             {reply, Response, State};
         {delete, Key, Options}
-            when is_binary(Key), is_list(Options) ->
+            when is_binary(Key) ->
             Response = riakc_pb_socket:delete(Connection, Bucket, Key,
                                               Options, Timeout),
             {reply, Response, State};
         {delete, Object, Options}
-            when is_tuple(Object), is_list(Options) ->
+            when is_tuple(Object) ->
             Response = riakc_pb_socket:delete(Connection, Bucket,
                                               riakc_obj:key(Object),
                                               Options, Timeout),
             {reply, Response, State};
-        {get, Key, Options0}
-            when is_binary(Key), is_list(Options0) ->
+        {get, Key, Options0} ->
             Defaults = [
                 {object, false}],
             [ObjectReply | OptionsN] =
@@ -600,6 +700,8 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
                         ObjectReply =:= false ->
                             object_to_tuple(Object)
                     end;
+                unchanged ->
+                    {ok, Key, undefined};
                 {error, _} = Error ->
                     Error
             end,
@@ -633,14 +735,19 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
                     Error
             end,
             {reply, Response, State};
-        {put, Key, ValueOrObject, Options0}
-            when is_binary(Key), is_list(Options0) ->
+        {put, Key, ValueOrObject, Options0} ->
             Defaults = [
                 {content_type, undefined},
                 {object, false},
                 {indexes, []}],
-            [ContentType, ObjectReply, Indexes | OptionsN] =
+            [ContentType, ObjectReply, Indexes | Options1] =
                 cloudi_proplists:take_values(Defaults, Options0),
+            OptionsN = if
+                ObjectReply =:= true ->
+                    [return_body | Options1];
+                true ->
+                    Options1
+            end,
             Response = case ensure_object(Connection, Bucket, Key,
                                           ValueOrObject, Timeout) of
                 {ok, Object0} ->
@@ -650,10 +757,11 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
                     case riakc_pb_socket:put(Connection, Object2,
                                              OptionsN, Timeout) of
                         ok ->
+                            false = ObjectReply,
                             if
-                                ObjectReply =:= true ->
-                                    {ok, Key, Object2};
-                                ObjectReply =:= false ->
+                                is_binary(ValueOrObject) ->
+                                    {ok, Key, ValueOrObject};
+                                is_tuple(ValueOrObject) ->
                                     object_to_tuple(Object2)
                             end;
                         {ok, ObjectN} ->
@@ -669,7 +777,14 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
                 {error, _} = Error ->
                     Error
             end,
-            {reply, Response, State}
+            {reply, Response, State};
+        {list_buckets, Options0} ->
+            Options1 = [{timeout, Timeout} | Options0],
+            {reply, riakc_pb_socket:list_buckets(Connection, Options1), State};
+        {list_keys, Options0} ->
+            Options1 = [{timeout, Timeout} | Options0],
+            {reply, riakc_pb_socket:list_keys(Connection, Bucket,
+                                              Options1), State}
     end.
 
 cloudi_service_handle_info({ping, Ping} = Request,
@@ -726,12 +841,12 @@ object_update(Object, ValueOrObject, ContentType)
 object_update(Object, ValueOrObject, undefined)
     when is_binary(ValueOrObject) ->
     riakc_obj:update_value(Object, ValueOrObject);
-object_update(Object, ValueOrObject, ContentType)
-    when is_tuple(ValueOrObject),
+object_update(Object, Object, ContentType)
+    when is_tuple(Object),
          is_list(ContentType), is_integer(hd(ContentType)) ->
     riakc_obj:update_content_type(Object, ContentType);
-object_update(Object, ValueOrObject, undefined)
-    when is_tuple(ValueOrObject) ->
+object_update(Object, Object, undefined)
+    when is_tuple(Object) ->
     Object.
 
 object_indexes(Object0, []) ->
