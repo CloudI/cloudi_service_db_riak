@@ -69,6 +69,7 @@
          list_buckets/4,
          list_keys/4,
          object_value/1,
+         object_update/2,
          object/2,
          object/3,
          object/4]).
@@ -543,6 +544,19 @@ list_keys(Dispatcher, Name, Options, Timeout)
 
 object_value(Object) ->
     object_to_tuple(Object).
+
+%%-------------------------------------------------------------------------
+%% @doc
+%% ===Update a riak object value.===
+%% @end
+%%-------------------------------------------------------------------------
+
+-spec object_update(Object :: riakc_obj(),
+                    Value :: binary()) ->
+    riakc_obj().
+
+object_update(Object, Value) ->
+    riakc_obj:update_value(Object, Value).
 
 %%-------------------------------------------------------------------------
 %% @doc
