@@ -49,13 +49,14 @@ init_per_suite(Config) ->
         {internal,
             "/",
             cloudi_service_db_riak,
-            [{bucket, ?BUCKET}],
+            [{debug, true},
+             {bucket, ?BUCKET}],
             immediate_closest,
             5000, 5000, 5000, undefined, undefined, 1, 5, 300, []}
         ], infinity),
     Config.
 
-end_per_suite(Config) ->
+end_per_suite(_Config) ->
     ok = reltool_util:application_stop(cloudi_core),
     ok.
 
@@ -241,35 +242,43 @@ t_secondary_index_1(_Config) ->
                                                       Key10, Value10,
                                                       [{indexes, Indexes10}],
                                                       undefined),
+    % requires that riak_kv uses riak_kv_eleveldb_backend
+    % (http://docs.basho.com/riak/1.2.0/tutorials/choosing-a-backend/LevelDB/)
     {ok,
-     [<<"key00">>,<<"key02">>,<<"key04">>,
-      <<"key06">>,<<"key08">>,<<"key10">>],
+     KeyListEven,
      undefined,
      undefined} = cloudi_service_db_riak:
                   get_index_eq(Context, ServiceName,
                                {binary_index, "even"}, <<"true">>,
                                undefined),
+    [<<"key00">>,<<"key02">>,<<"key04">>,
+     <<"key06">>,<<"key08">>,<<"key10">>] = lists:sort(KeyListEven),
     {ok,
-     [<<"key01">>,<<"key02">>,<<"key03">>,<<"key05">>,<<"key07">>],
+     KeyListPrime,
      undefined,
      undefined} = cloudi_service_db_riak:
                   get_index_eq(Context, ServiceName,
                                {binary_index, "prime"}, <<"true">>,
                                undefined),
+    [<<"key01">>,<<"key02">>,<<"key03">>,
+     <<"key05">>,<<"key07">>] = lists:sort(KeyListPrime),
     {ok,
-     [<<"key03">>,<<"key06">>,<<"key09">>],
+     KeyListDivBy3,
      undefined,
      undefined} = cloudi_service_db_riak:
                   get_index_eq(Context, ServiceName,
                                {binary_index, "div_by_3"}, <<"true">>,
                                undefined),
+    [<<"key03">>,<<"key06">>,<<"key09">>] = lists:sort(KeyListDivBy3),
     {ok,
-     [<<"key02">>,<<"key04">>,<<"key06">>,<<"key09">>],
+     KeyListGreatestDivisor,
      undefined,
      undefined} = cloudi_service_db_riak:
                   get_index_range(Context, ServiceName,
                                   {integer_index, "greatest_divisor"},
                                   2, 3, undefined),
+    [<<"key02">>,<<"key04">>,<<"key06">>,
+     <<"key09">>] = lists:sort(KeyListGreatestDivisor),
     ok = cloudi_service_db_riak:delete(Context, ServiceName, Key0, undefined),
     ok = cloudi_service_db_riak:delete(Context, ServiceName, Key1, undefined),
     ok = cloudi_service_db_riak:delete(Context, ServiceName, Key2, undefined),

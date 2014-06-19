@@ -69,10 +69,7 @@
          list_buckets/4,
          list_keys/4,
          object_value/1,
-         object_update/2,
-         object/2,
-         object/3,
-         object/4]).
+         object_update/2]).
 
 %% cloudi_service callbacks
 -export([cloudi_service_init/3,
@@ -82,15 +79,18 @@
 
 -include_lib("cloudi_core/include/cloudi_logger.hrl").
 
--define(DEFAULT_HOST_NAME,                  "127.0.0.1").
--define(DEFAULT_PORT,                              8087).
--define(DEFAULT_OPTIONS,                             []).
--define(DEFAULT_PING,                         undefined). % ms
--define(DEFAULT_BUCKET,                       undefined). % lock to bucket
+-define(DEFAULT_HOST_NAME,            "127.0.0.1").
+-define(DEFAULT_PORT,                        8087).
+-define(DEFAULT_OPTIONS,                       []).
+-define(DEFAULT_PING,                   undefined). % ms
+-define(DEFAULT_DEBUG,                      false). % log output for debugging
+-define(DEFAULT_DEBUG_LEVEL,                trace).
+-define(DEFAULT_BUCKET,                 undefined). % lock to a specific bucket
 
 -record(state,
     {
         connection :: pid(),
+        debug_level :: off | trace | debug | info | warn | error | fatal,
         prefix_length :: pos_integer()
     }).
 
@@ -558,60 +558,20 @@ object_value(Object) ->
 object_update(Object, Value) ->
     riakc_obj:update_value(Object, Value).
 
-%%-------------------------------------------------------------------------
-%% @doc
-%% ===Modify the riak object.===
-%% @end
-%%-------------------------------------------------------------------------
-
--spec object(F :: atom(),
-             Arg1 :: riakc_obj()) ->
-    any().
-
-object(F, Arg1) when is_atom(F) ->
-    riakc_obj:F(Arg1).
-
-%%-------------------------------------------------------------------------
-%% @doc
-%% ===Modify the riak object.===
-%% @end
-%%-------------------------------------------------------------------------
-
--spec object(F :: atom(),
-             Arg1 :: riakc_obj() | any(),
-             Arg2 :: riakc_obj() | any()) ->
-    any().
-
-object(F, Arg1, Arg2) when is_atom(F) ->
-    riakc_obj:F(Arg1, Arg2).
-
-%%-------------------------------------------------------------------------
-%% @doc
-%% ===Modify the riak object.===
-%% @end
-%%-------------------------------------------------------------------------
-
--spec object(F :: atom(),
-             Arg1 :: riakc_obj() | any(),
-             Arg2 :: riakc_obj() | any(),
-             Arg3 :: riakc_obj() | any()) ->
-    any().
-
-object(F, Arg1, Arg2, Arg3) when is_atom(F) ->
-    riakc_obj:F(Arg1, Arg2, Arg3).
-
 %%%------------------------------------------------------------------------
 %%% Callback functions from cloudi_service
 %%%------------------------------------------------------------------------
 
 cloudi_service_init(Args, Prefix, Dispatcher) ->
     Defaults = [
-        {hostname,                       ?DEFAULT_HOST_NAME},
-        {port,                           ?DEFAULT_PORT},
-        {options,                        ?DEFAULT_OPTIONS},
-        {ping,                           ?DEFAULT_PING},
-        {bucket,                         ?DEFAULT_BUCKET}],
-    [HostName, Port, Options, Ping, Bucket] =
+        {hostname,                 ?DEFAULT_HOST_NAME},
+        {port,                     ?DEFAULT_PORT},
+        {options,                  ?DEFAULT_OPTIONS},
+        {ping,                     ?DEFAULT_PING},
+        {debug,                    ?DEFAULT_DEBUG},
+        {debug_level,              ?DEFAULT_DEBUG_LEVEL},
+        {bucket,                   ?DEFAULT_BUCKET}],
+    [HostName, Port, Options, Ping, Debug, DebugLevel, Bucket] =
         cloudi_proplists:take_values(Defaults, Args),
     true = is_list(HostName),
     true = is_integer(Port),
@@ -624,6 +584,14 @@ cloudi_service_init(Args, Prefix, Dispatcher) ->
             erlang:send_after(Ping, cloudi_service:self(Dispatcher),
                               {ping, Ping})
     end,
+    true = ((Debug =:= true) orelse
+            (Debug =:= false)),
+    true = ((DebugLevel =:= trace) orelse
+            (DebugLevel =:= debug) orelse
+            (DebugLevel =:= info) orelse
+            (DebugLevel =:= warn) orelse
+            (DebugLevel =:= error) orelse
+            (DebugLevel =:= fatal)),
     if
         Bucket =:= undefined ->
             cloudi_service:subscribe(Dispatcher, "*");
@@ -632,7 +600,14 @@ cloudi_service_init(Args, Prefix, Dispatcher) ->
     end,
     case riakc_pb_socket:start_link(HostName, Port, Options) of
         {ok, Connection} ->
+            DebugLogLevel = if
+                Debug =:= false ->
+                    off;
+                Debug =:= true ->
+                    DebugLevel
+            end,
             State = #state{connection = Connection,
+                           debug_level = DebugLogLevel,
                            prefix_length = erlang:length(Prefix)},
             % starting state needs to be connected,
             % irregardless of auto_connect, to fail-fast
@@ -673,8 +648,8 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
                 true ->
                     Options1
             end,
-            Response = case riakc_pb_socket:put(Connection, Object1,
-                                                OptionsN, Timeout) of
+            Response = case driver_put(Connection, Object1,
+                                       OptionsN, Timeout, State) of
                 ok ->
                     false = ObjectReply,
                     {ok, Key, Value};
@@ -691,22 +666,22 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
             {reply, Response, State};
         {delete, Key, Options}
             when is_binary(Key) ->
-            Response = riakc_pb_socket:delete(Connection, Bucket, Key,
-                                              Options, Timeout),
+            Response = driver_delete(Connection, Bucket,
+                                     Key, Options, Timeout, State),
             {reply, Response, State};
         {delete, Object, Options}
             when is_tuple(Object) ->
-            Response = riakc_pb_socket:delete(Connection, Bucket,
-                                              riakc_obj:key(Object),
-                                              Options, Timeout),
+            Key = riakc_obj:key(Object),
+            Response = driver_delete(Connection, Bucket,
+                                     Key, Options, Timeout, State),
             {reply, Response, State};
         {get, Key, Options0} ->
             Defaults = [
                 {object, false}],
             [ObjectReply | OptionsN] =
                 cloudi_proplists:take_values(Defaults, Options0),
-            Response = case riakc_pb_socket:get(Connection, Bucket, Key,
-                                                OptionsN, Timeout) of
+            Response = case driver_get(Connection, Bucket,
+                                       Key, OptionsN, Timeout, State) of
                 {ok, Object} ->
                     if
                         ObjectReply =:= true ->
@@ -723,9 +698,8 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
         {get_index_eq, Index, Key, Options0} ->
             Options1 = [{timeout, Timeout},
                         {call_timeout, Timeout + 100} | Options0],
-            Response = case riakc_pb_socket:get_index_eq(Connection,
-                                                         Bucket, Index, Key,
-                                                         Options1) of
+            Response = case driver_get_index_eq(Connection, Bucket,
+                                                Index, Key, Options1, State) of
                 {ok, #index_results_v1{keys = Keys,
                                        terms = Terms,
                                        continuation = Continuation}} ->
@@ -737,10 +711,9 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
         {get_index_range, Index, KeyStart, KeyEnd, Options0} ->
             Options1 = [{timeout, Timeout},
                         {call_timeout, Timeout + 100} | Options0],
-            Response = case riakc_pb_socket:get_index_range(Connection,
-                                                            Bucket, Index,
-                                                            KeyStart, KeyEnd,
-                                                            Options1) of
+            Response = case driver_get_index_range(Connection, Bucket,
+                                                   Index, KeyStart, KeyEnd,
+                                                   Options1, State) of
                 {ok, #index_results_v1{keys = Keys,
                                        terms = Terms,
                                        continuation = Continuation}} ->
@@ -763,13 +736,13 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
                     Options1
             end,
             Response = case ensure_object(Connection, Bucket, Key,
-                                          ValueOrObject, Timeout) of
+                                          ValueOrObject, Timeout, State) of
                 {ok, Object0} ->
                     Object1 = object_update(Object0,
                                             ValueOrObject, ContentType),
                     Object2 = object_indexes(Object1, Indexes),
-                    case riakc_pb_socket:put(Connection, Object2,
-                                             OptionsN, Timeout) of
+                    case driver_put(Connection, Object2,
+                                    OptionsN, Timeout, State) of
                         ok ->
                             false = ObjectReply,
                             if
@@ -794,11 +767,12 @@ cloudi_service_handle_request(_Type, Name, _Pattern, _RequestInfo, Request,
             {reply, Response, State};
         {list_buckets, Options0} ->
             Options1 = [{timeout, Timeout} | Options0],
-            {reply, riakc_pb_socket:list_buckets(Connection, Options1), State};
+            Response = driver_list_buckets(Connection, Options1, State),
+            {reply, Response, State};
         {list_keys, Options0} ->
             Options1 = [{timeout, Timeout} | Options0],
-            {reply, riakc_pb_socket:list_keys(Connection, Bucket,
-                                              Options1), State}
+            Response = driver_list_keys(Connection, Bucket, Options1, State),
+            {reply, Response, State}
     end.
 
 cloudi_service_handle_info({ping, Ping} = Request,
@@ -836,7 +810,7 @@ object_to_tuple(Object) ->
             {siblings, riakc_obj:key(Object), Values}
     end.
 
-ensure_object(_, Bucket, _, ValueOrObject, _)
+ensure_object(_, Bucket, _, ValueOrObject, _, _)
     when is_tuple(ValueOrObject) ->
     case riakc_obj:bucket(ValueOrObject) of
         Bucket ->
@@ -844,9 +818,9 @@ ensure_object(_, Bucket, _, ValueOrObject, _)
         _ ->
             {error, bucket_mismatch}
     end;
-ensure_object(Connection, Bucket, Key, ValueOrObject, Timeout)
+ensure_object(Connection, Bucket, Key, ValueOrObject, Timeout, State)
     when is_binary(ValueOrObject) ->
-    riakc_pb_socket:get(Connection, Bucket, Key, [], Timeout).
+    driver_get(Connection, Bucket, Key, [], Timeout, State).
 
 object_update(Object, ValueOrObject, ContentType)
     when is_binary(ValueOrObject),
@@ -871,3 +845,145 @@ object_indexes(Object0, [_ | _] = Indexes) ->
     MD2 = riakc_obj:set_secondary_index(MD1, Indexes),
     riakc_obj:update_metadata(Object0, MD2).
 
+driver_put(Connection, Object, Options, Timeout,
+           #state{debug_level = DebugLevel}) ->
+    Result = try riakc_pb_socket:put(Connection, Object,
+                                     Options, Timeout)
+    catch
+        ExceptionType:ExceptionReason ->
+            {error, {ExceptionType, ExceptionReason}}
+    end,
+    if
+        DebugLevel =:= off ->
+            ok;
+        true ->
+            driver_debug(DebugLevel, put,
+                         [Connection, Object,
+                          Options, Timeout], Result)
+    end,
+    Result.
+
+driver_delete(Connection, Bucket, Key, Options, Timeout,
+              #state{debug_level = DebugLevel}) ->
+    Result = try riakc_pb_socket:delete(Connection, Bucket,
+                                        Key, Options, Timeout)
+    catch
+        ExceptionType:ExceptionReason ->
+            {error, {ExceptionType, ExceptionReason}}
+    end,
+    if
+        DebugLevel =:= off ->
+            ok;
+        true ->
+            driver_debug(DebugLevel, delete,
+                         [Connection, Bucket, Key,
+                          Options, Timeout], Result)
+    end,
+    Result.
+
+driver_get(Connection, Bucket, Key, Options, Timeout,
+           #state{debug_level = DebugLevel}) ->
+    Result = try riakc_pb_socket:get(Connection, Bucket, Key,
+                                     Options, Timeout)
+    catch
+        ExceptionType:ExceptionReason ->
+            {error, {ExceptionType, ExceptionReason}}
+    end,
+    if
+        DebugLevel =:= off ->
+            ok;
+        true ->
+            driver_debug(DebugLevel, get,
+                         [Connection, Bucket, Key,
+                          Options, Timeout], Result)
+    end,
+    Result.
+
+driver_get_index_eq(Connection, Bucket, Index, Key, Options,
+                    #state{debug_level = DebugLevel}) ->
+    Result = try riakc_pb_socket:get_index_eq(Connection, Bucket,
+                                              Index, Key, Options)
+    catch
+        ExceptionType:ExceptionReason ->
+            {error, {ExceptionType, ExceptionReason}}
+    end,
+    if
+        DebugLevel =:= off ->
+            ok;
+        true ->
+            driver_debug(DebugLevel, get_index_eq,
+                         [Connection, Bucket,
+                          Index, Key, Options], Result)
+    end,
+    Result.
+
+driver_get_index_range(Connection, Bucket,
+                       Index, KeyStart, KeyEnd, Options,
+                       #state{debug_level = DebugLevel}) ->
+    Result = try riakc_pb_socket:get_index_range(Connection, Bucket, Index,
+                                                 KeyStart, KeyEnd, Options)
+    catch
+        ExceptionType:ExceptionReason ->
+            {error, {ExceptionType, ExceptionReason}}
+    end,
+    if
+        DebugLevel =:= off ->
+            ok;
+        true ->
+            driver_debug(DebugLevel, get_index_range,
+                         [Connection, Bucket, Index,
+                          KeyStart, KeyEnd, Options], Result)
+    end,
+    Result.
+
+driver_list_buckets(Connection, Options,
+                    #state{debug_level = DebugLevel}) ->
+    Result = try riakc_pb_socket:list_buckets(Connection, Options)
+    catch
+        ExceptionType:ExceptionReason ->
+            {error, {ExceptionType, ExceptionReason}}
+    end,
+    if
+        DebugLevel =:= off ->
+            ok;
+        true ->
+            driver_debug(DebugLevel, list_buckets,
+                         [Connection, Options], Result)
+    end,
+    Result.
+
+driver_list_keys(Connection, Bucket, Options,
+                 #state{debug_level = DebugLevel}) ->
+    Result = try riakc_pb_socket:list_keys(Connection, Bucket, Options)
+    catch
+        ExceptionType:ExceptionReason ->
+            {error, {ExceptionType, ExceptionReason}}
+    end,
+    if
+        DebugLevel =:= off ->
+            ok;
+        true ->
+            driver_debug(DebugLevel, list_keys,
+                         [Connection, Bucket, Options], Result)
+    end,
+    Result.
+
+driver_debug_log(trace, Message, Args) ->
+    ?LOG_TRACE(Message, Args);
+driver_debug_log(debug, Message, Args) ->
+    ?LOG_DEBUG(Message, Args);
+driver_debug_log(info, Message, Args) ->
+    ?LOG_INFO(Message, Args);
+driver_debug_log(warn, Message, Args) ->
+    ?LOG_WARN(Message, Args);
+driver_debug_log(error, Message, Args) ->
+    ?LOG_ERROR(Message, Args);
+driver_debug_log(fatal, Message, Args) ->
+    ?LOG_FATAL(Message, Args).
+
+driver_debug(Level, Function, Arguments, Result) ->
+    driver_debug_log(Level,
+                     "RIAK(~p):~n"
+                     " ~p~n"
+                     " = ~p",
+                     [Function, Arguments, Result]).
