@@ -100,7 +100,7 @@ t_get_put_sequence_1(_Config) ->
     {ok, Key0, Value0} = cloudi_service_db_riak:get(Context, ServiceName,
                                                     Object0, undefined),
     Value1 = <<"value1">>,
-    Object1 = riakc_obj:update_value(Object0, Value1),
+    Object1 = cloudi_service_db_riak:object_update(Object0, Value1),
     % can't see updated value on Object0,
     % vclock is not updated until after a put
     {ok, Key0, Value0} = cloudi_service_db_riak:get(Context, ServiceName,
