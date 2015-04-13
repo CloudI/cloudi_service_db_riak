@@ -1,6 +1,6 @@
 {application, cloudi_service_db_riak,
   [{description, "Riak CloudI Service"},
-   {vsn, "1.4.0"},
+   {vsn, "1.5.0"},
    {modules, [
         ]},
    {registered,[

@@ -3,7 +3,7 @@ defmodule CloudIServiceDbRiak do
 
   def project do
     [app: :cloudi_service_db_riak,
-     version: "1.4.0",
+     version: "1.5.0",
      language: :erlang,
      description: description,
      package: package,
@@ -17,7 +17,7 @@ defmodule CloudIServiceDbRiak do
        tag: "1.4.2"]},
      # protobuffs rebar.config version which doesn't work with 17.x types
      {:meck, "~> 0.8.2", override: true}, # due to protobuffs
-     {:cloudi_core, "~> 1.4.0"}]
+     {:cloudi_core, "~> 1.5.0"}]
   end
 
   defp description do
