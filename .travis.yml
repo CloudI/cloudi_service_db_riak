@@ -1,7 +1,7 @@
 language: erlang
 otp_release:
-  - 18.2.1
-  - 17.5
+  - R16B03-1
+  - R16B
 services:
   - riak
 before_script:
